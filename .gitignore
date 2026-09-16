@@ -1,0 +1,12 @@
+.env
+node_modules/
+*.json.tmp
+ticket-storage.pending.json
+data/*.json
+!data/games.json
+/tickets.json
+/games.json
+/accounts-data.json
+/audit-log.json
+/sellers.json
+/ticket-config.json

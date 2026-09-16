@@ -1,0 +1,20 @@
+[Unit]
+Description=INFINITY Store Discord Bot
+After=network.target
+
+[Service]
+Type=simple
+User=mosamirhelal
+WorkingDirectory=/home/mosamirhelal/discord.bot
+ExecStart=/usr/local/bin/bun run index.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+MemoryMax=250M
+MemoryHigh=200M
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=infinity-bot
+
+[Install]
+WantedBy=multi-user.target
