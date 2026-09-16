@@ -25,7 +25,7 @@ const {
 const fs = require("fs");
 const path = require("path");
 const { randomUUID } = require("crypto");
-const { sheetsLog, sheetsUpsertTicket } = require("./sheets");
+const { sheetsLog, sheetsUpsertTicket, sheetsUpsertPayment } = require("./sheets");
 
 // =====================================================
 // SETTINGS
@@ -182,6 +182,32 @@ function ticketSheetRow(ticket) {
         paidBy:ticket.paidBy || "",paidByName:ticket.paidByName || "",paidAt:ticket.paidAt || "",
         closedBy:ticket.closedBy || "",closedByName:ticket.closedByName || "",closedAt:ticket.closedAt || ""
     };
+}
+function paymentSheetRow(ticket, creditedTotal = "") {
+    const buyers=ticketBuyerIds(ticket);
+    const dueAt=buyerDueAt(ticket);
+    const buyerPaid=Boolean(ticket.buyerPayment?.paidAt);
+    return {
+        ticketId:ticket.ticketId,
+        sellerId:ticket.userId,
+        quantity:ticket.quantity || 1,
+        game:getGameName(ticket.game),
+        price:ticket.price || "",
+        paymentMethod:ticket.paymentDisplay || getPaymentName(ticket.payment),
+        buyerId:ticket.buyerPayment?.payerId || buyers.join(","),
+        amountDue:ticket.price || "",
+        dueSince:ticket.warrantyEndsAt || "",
+        buyerPaidAt:ticket.buyerPayment?.paidAt || "",
+        buyerStatus:buyerPaid ? "PAID" : (dueAt!==null && dueAt<=Date.now() ? "DUE" : "PENDING"),
+        sellerPaidAt:ticket.paidAt || "",
+        sellerPaidBy:ticket.paidByName ? `${ticket.paidByName} (${ticket.paidBy})` : ticket.paidBy || "",
+        fundsReleasedAt:ticket.fundsReleasedAt || "",
+        creditedTotal
+    };
+}
+function logPaymentSnapshot(ticket, creditedTotal = "") {
+    Promise.resolve(sheetsUpsertPayment(paymentSheetRow(ticket,creditedTotal)))
+        .catch(error=>console.error("Payment sheet sync failed:",error.message));
 }
 let ticketSheetSyncRunning=false;
 function logTicketSnapshot(ticket, initial=false) {
@@ -2362,6 +2388,7 @@ client.on(Events.InteractionCreate, async interaction => {
             if(interaction.customId!==`buyer_paid_pick:${ticket.ticketId}` || interaction.values.length!==1 || !buyers.includes(payer)) return interaction.reply({content:"اختيار غير صالح؛ افتح اللوحة مجددًا / Invalid selection; reopen controls",flags:MessageFlags.Ephemeral});
             ticket.buyerPayment={...ticket.buyerPayment,paidAt:new Date().toISOString(),payerId:payer,confirmedBy:interaction.user.id,price:ticket.price};
             saveTickets(tickets);
+            logPaymentSnapshot(ticket);
             audit("BUYER_PAYMENT_CONFIRMED",interaction.user.id,ticket);
             return interaction.update({content:"✅ تم سداد إجمالي التيكت عند جميع المشترين وإيقاف تنبيهات الدفع / Order settled for all buyers; payment reminders stopped.",components:[],allowedMentions:{parse:[]}});
         }
@@ -2420,16 +2447,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 if (!ticket.closedAt) ticket.status="PAID";
                 saveTickets(tickets);
                 logTicketSnapshot(ticket);
-                sheetsLog("Payouts", {
-                    ticketId: ticket.ticketId,
-                    paidAt: ticket.paidAt,
-                    paidBy: ticket.paidBy,
-                    sellerId: ticket.userId,
-                    quantity: ticket.quantity,
-                    game: ticket.game,
-                    fundsReleasedAt: ticket.fundsReleasedAt,
-                    creditedTotal: count
-                });
+                logPaymentSnapshot(ticket,count);
                 audit("PAID", interaction.user.id,ticket,{creditedTo:ticket.userId,quantity:ticket.quantity,total:count});
                 await interaction.deferReply({flags:MessageFlags.Ephemeral});
                 const rank=await updateSellerRank(interaction.guild,ticket.userId);
@@ -4126,6 +4144,8 @@ async function checkTimedTickets() {
             current.fundsStatus = "RELEASED";
             current.fundsReleasedAt = new Date().toISOString();
             saveTickets(fresh);
+            logTicketSnapshot(current);
+            logPaymentSnapshot(current);
             sheetsLog("Sales", {
                 ticketId: current.ticketId,
                 soldAt: current.soldAt || current.fundsReleasedAt,
